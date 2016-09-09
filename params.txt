@@ -1,0 +1,4 @@
+pick_otus:similarity 0.97
+pick_otus:enable_rev_strand_match True
+uclust:strand both
+
