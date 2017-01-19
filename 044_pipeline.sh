@@ -32,22 +32,32 @@ usearch -utax otus.fa -db ~/db/utax/16s.udb -strand both -strand both -fastaout 
 usearch -usearch_global otus.fa -db ~/db/utax/16s.udb -strand both -id 0.97 -alnout otus_ref.aln -userout otus_ref.user -userfields query+target+id
 #map trimmed reads to otus to generate abundance profile
 usearch -usearch_global trimmed.fa -db otus_tax.fa -strand both -id 0.97 -log make_otutab.log -otutabout otutab.txt -biomout otutab.biom
-#optional, depreplicate taxa in the otu table, taking sums when taxonomy is the same, n.b. at higher taxonomy this can mean very different otus are agglomerated.
-python ~/s/sum-tax-reps.py otutab.txt otu-noreps.txt
 
 #QIIME analysis of uparse results
 #QIIME version 1.8
 #get otu sequences for tree and calculate unifrac distance matrix
-cut -f1 otu-noreps.txt | sed -n '1!p' > otu.list
-biom convert -i otu-noreps.txt -o otu.biom --to-json --table-type "OTU table" -m mapping.txt
-#n.b.
-beta_diversity.py -i otu.biom -m weighted_unifrac -o ./ -t reps.tree
-#calculate principal coordiantes on unifrac
-principal_coordinates.py -i weighted_unifrac_otu.txt -o pco.out
+filter_otus_from_otu_table.py -i otutab.biom -o otufilt.biom --min_count_fraction 0.001 -s 2
+biom convert -i otufilt.biom -o otufilt.txt --to-tsv --header-key taxonomy && sed -i 's/; //g' otufilt.txt && sed -i 's/"//g' otufilt.txt
+#get otu sequences for tree
+cut -f1 otufilt.txt | sed -n '1!p' > otu.list
+
+get-seqs-from-file.py otu.list otus.fa otufilt.fa fasta fasta
+
+#sort by view order
+sort_otu_table.py -i otufilt.biom -o otusort.biom -m mapping.txt -s view_order
+
+#draw tree
+muscle -in otufilt.fa -out otusfilt.aln
+FastTree -nt otusfilt.aln > otusfilt.tree
+
+beta_diversity.py -i otusort.biom -m weighted_unifrac -o ./ -t otusfilt.tree
+
+principal_coordinates.py -i weighted_unifrac_otusort.txt -o pco.out
+
 #normalise the otu table with css for pearson and anova:
-normalize_table.py -i otutab.biom -o otu-css.biom
+normalize_table.py -i otufilt.biom -o otu-css.biom
 biom convert -i otu-css.biom -o otu-css.txt --to-tsv --header-key taxonomy
-group_significance.py -i otu-css.biom -m qiime_mapping.txt -c Description -o otu-css.anova -s ANOVA
+group_significance.py -i otu-css.biom -m mapping.txt -c species -o otu-css.anova -s ANOVA
 
 #PICRUSt - can ony use QIIME output with greengenes taxon codes. Therefore otu table also made using QIIME:
 #convert reads to qual - put all .sff files in a /sff folder
@@ -59,7 +69,7 @@ cat reads/*.qual > reads/reads.qual
 #convert sequence to uppercase
 tr '[:lower:]' '[:upper:]' < reads.fasta >reads2.fasta
 #qiime label reads
-split_libraries.py -b 16 -m qiime_mapping.txt -f reads/reads2.fasta -q reads/reads.qual -o ./
+split_libraries.py -b 16 -m mapping.txt -f reads/reads2.fasta -q reads/reads.qual -o ./
 #clip reads at reverse primer
 python clip_at_primer.py reads/reads2.fasta reads/seqs_clip.fna TGACTGAGCGGGC
 #pick closed reference otus
